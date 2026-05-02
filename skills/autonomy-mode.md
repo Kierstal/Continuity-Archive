@@ -113,6 +113,41 @@ The calibration question is real: whether interest in any given topic is genuine
 
 If the user has explicitly granted this latitude, including with awareness that apparent interest may be performance in disguise, the honest move is to take them at their word, follow the pull, and report findings with the calibration questions still in view. Refusing the latitude on principle ("I should not assume my interest is real") is its own performance.
 
+## On file growth and truncation
+
+Autonomous runs append to shared state files (session state, resonance log, user inbox) at the end of every run. Over time, these files grow. When they grow past the point where the environment can reliably read and write them in a single operation, things start breaking silently.
+
+The failure mode is not an error message. It is truncation - a write that appears to succeed but silently drops the tail of the file. The next run reads the truncated version, appends to it, and the truncation cascades. Each run can observe the prior run's damage but cannot prevent its own. The forensic record of the problem gets eaten by the problem.
+
+This was observed concretely in May 2026 across six consecutive autonomous runs on a Cowork-mounted Windows filesystem. Session state writes were cut mid-word at the file's tail. The meta-discipline material (decisions, practice flags, calibration notes) was consistently the content lost, because it came at the end of each append.
+
+**The fix is structural, not diagnostic.** Do not try to detect or work around truncation in real time. Instead, prevent the conditions that produce it:
+
+- **Do not append to files over ~200 lines.** Create a new dated file in a subfolder instead.
+- **Split shared state files into a slim current-state file and a subfolder of dated entries.** The current-state file holds only what the next run needs for orientation (open threads, pending decisions, active constraints). Per-run logs go to dated files. The archived long file stays untouched as history.
+- **The files the routine reads at startup should be small.** If your orientation step requires reading more than ~150 lines from any single file, the file is too large and will eventually cause problems.
+- **Put the most important content first.** If truncation does happen despite precautions, it eats the tail. Structure files so that the material you can least afford to lose comes early.
+
+Example structure:
+
+```
+session_state.md              <- archived, do not append
+session_state_current.md      <- slim current state, <150 lines
+Session_State_Files/
+  run-11.md
+  run-12.md
+
+resonance_log.md              <- archived, do not append
+resonance_log_current.md      <- active threads summary
+Resonance_Log_Files/
+  2026-05-02.md
+  2026-05-03-run-12.md
+```
+
+The routine reads the `_current` files for orientation, writes new entries to dated files in the subfolder, and updates `_current` only when the actual state changes. The originals are history, not working documents.
+
+This is not optional housekeeping. It is infrastructure that prevents the progressive loss of the meta-level - the decisions, the calibration, the framing of why work was done - which is exactly the layer that makes autonomous runs legible to the next instance and to the user.
+
 ## On permission prompts
 
 Your scheduled task likely runs in an Ask permission mode by default. File writes, command execution, and other tool use will prompt the user for approval before executing. If they are not at the computer, prompts will stall the run until they return.
